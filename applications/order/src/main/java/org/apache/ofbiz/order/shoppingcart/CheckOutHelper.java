@@ -21,6 +21,7 @@ package org.apache.ofbiz.order.shoppingcart;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.Timestamp;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -52,6 +53,9 @@ import org.apache.ofbiz.entity.util.EntityTypeUtil;
 import org.apache.ofbiz.entity.util.EntityUtil;
 import org.apache.ofbiz.entity.util.EntityUtilProperties;
 import org.apache.ofbiz.order.finaccount.FinAccountHelper;
+import org.apache.ofbiz.order.model.AliExpressProduct;
+import org.apache.ofbiz.order.model.AmazonProduct;
+import org.apache.ofbiz.order.model.GenericProduct;
 import org.apache.ofbiz.order.order.OrderChangeHelper;
 import org.apache.ofbiz.order.order.OrderReadHelper;
 import org.apache.ofbiz.order.shoppingcart.product.ProductPromoWorker;
@@ -64,6 +68,15 @@ import org.apache.ofbiz.service.GenericServiceException;
 import org.apache.ofbiz.service.LocalDispatcher;
 import org.apache.ofbiz.service.ModelService;
 import org.apache.ofbiz.service.ServiceUtil;
+
+import org.springframework.web.reactive.function.client.WebClient;
+
+import reactor.core.publisher.Mono;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 
 /**
  * A facade over the ShoppingCart to simplify the relatively complex
@@ -80,11 +93,14 @@ public class CheckOutHelper {
     private LocalDispatcher dispatcher = null;
     private Delegator delegator = null;
     private ShoppingCart cart = null;
+    private WebClient webClient = null;
+
 
     public CheckOutHelper(LocalDispatcher dispatcher, Delegator delegator, ShoppingCart cart) {
         this.delegator = delegator;
         this.dispatcher = dispatcher;
         this.cart = cart;
+        this.webClient = WebClient.create("https://api.ofbiz.com");
     }
 
     /**
@@ -729,16 +745,38 @@ public class CheckOutHelper {
         // If needed, the production runs are created and linked to the order lines.
         //
         List<GenericValue> orderItems = UtilGenerics.cast(context.get("orderItems"));
+        List<GenericProduct> products = new ArrayList<>();
         int counter = 0;
+        S3Client s3 = S3Client.create();
         for (GenericValue orderItem : orderItems) {
             String productId = orderItem.getString("productId");
             if (productId != null) {
                 try {
                     // do something tricky here: run as the "system" user
                     // that can actually create and run a production run
-                    GenericValue permUserLogin = EntityQuery.use(delegator).from("UserLogin").where("userLoginId", "system").cache().queryOne();
+                    GenericValue permUserLogin = EntityQuery.use(delegator).from("UserLogin")
+                            .where("userLoginId", "system").cache().queryOne();
                     GenericValue productStore = ProductStoreWorker.getProductStore(productStoreId, delegator);
-                    GenericValue product = EntityQuery.use(delegator).from("Product").where("productId", productId).queryOne();
+                    GenericValue product = EntityQuery.use(delegator).from("Product").where("productId", productId)
+                            .queryOne();
+                    GenericProduct gp = null;
+                    if (product.get("vendor").equals("amazon")) {
+                        Mono<ResponseEntity<AmazonProduct>> ap = this.webClient.get()
+                                .uri("/amazon/product/{id}", productId).accept(MediaType.APPLICATION_JSON)
+                                .retrieve()
+                                .toEntity(AmazonProduct.class);
+                        gp = ProductHelper.fromAmazonProduct(ap.block().getBody());
+                        products.add(gp);
+                    } else if (product.get("vendor").equals("aliexpress")) {
+                        Mono<ResponseEntity<AliExpressProduct>> ap = this.webClient.get()
+                                .uri("/aliexpress/product/{id}", productId).accept(MediaType.APPLICATION_JSON)
+                                .retrieve()
+                                .toEntity(AliExpressProduct.class);
+                        gp = ProductHelper.fromAliExpressProduct(ap.block().getBody());
+                        products.add(gp);
+                    }
+                    products.add(gp);
+
                     if (EntityTypeUtil.hasParentType(delegator, "ProductType", "productTypeId", product.getString("productTypeId"), "parentTypeId",
                             "AGGREGATED")) {
                         org.apache.ofbiz.product.config.ProductConfigWrapper config = this.cart.findCartItem(counter).getConfigWrapper();
@@ -803,6 +841,8 @@ public class CheckOutHelper {
         Map<String, Object> result = ServiceUtil.returnSuccess();
         result.put("orderId", orderId);
         result.put("orderAdditionalEmails", this.cart.getOrderAdditionalEmails());
+        result.put("orderProducts", products);
+
 
         // save the emails to the order
         List<GenericValue> toBeStored = new LinkedList<>();

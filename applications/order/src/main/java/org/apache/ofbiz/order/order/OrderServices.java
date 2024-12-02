@@ -71,6 +71,7 @@ import org.apache.ofbiz.order.shoppingcart.ShoppingCart;
 import org.apache.ofbiz.order.shoppingcart.ShoppingCartItem;
 import org.apache.ofbiz.order.shoppingcart.product.ProductPromoWorker;
 import org.apache.ofbiz.order.shoppingcart.shipping.ShippingEvents;
+import org.apache.ofbiz.order.util.S3Uploader;
 import org.apache.ofbiz.party.contact.ContactHelper;
 import org.apache.ofbiz.party.contact.ContactMechWorker;
 import org.apache.ofbiz.party.party.PartyWorker;
@@ -83,6 +84,8 @@ import org.apache.ofbiz.service.LocalDispatcher;
 import org.apache.ofbiz.service.ModelService;
 import org.apache.ofbiz.service.ServiceUtil;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ibm.icu.util.Calendar;
 
 /**
@@ -95,6 +98,7 @@ public class OrderServices {
     private static final String RESOURCE = "OrderUiLabels";
     private static final String RES_ERROR = "OrderErrorUiLabels";
     private static final String RES_PRODUCT = "ProductUiLabels";
+    private static final String ORDER_BUCKET = System.getenv("ENVIRONMENT") + "-order-bucket";
 
     private static final Map<String, String> SALES_ROLE_MAP = new HashMap<>();
     private static final Map<String, String> PURCHASE_ROLE_MAP = new HashMap<>();
@@ -103,6 +107,8 @@ public class OrderServices {
     private static final int DECIMALS = UtilNumber.getBigDecimalScale("order.decimals");
     private static final RoundingMode ROUNDING = UtilNumber.getRoundingMode("order.rounding");
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(TAX_SCALE, TAX_ROUNDING);
+
+    private static final S3Uploader s3Uploader = new S3Uploader(ORDER_BUCKET);
 
     static {
         SALES_ROLE_MAP.put("placingCustomerPartyId", "PLACING_CUSTOMER");
@@ -5554,7 +5560,16 @@ public class OrderServices {
         if (ServiceUtil.isError(createOrder)) {
             return createOrder;
         }
+
+
         String orderId = (String) createOrder.get("orderId");
+        try {
+            String orderJson = new ObjectMapper().writeValueAsString(createOrder);
+            s3Uploader.uploadContentsToFile(orderJson, ORDER_BUCKET, orderId);
+        } catch (JsonProcessingException e) {
+            Debug.logError(e, MODULE);
+            return ServiceUtil.returnError(e.getMessage());
+        }
 
         Map<String, Object> result = ServiceUtil.returnSuccess();
         result.put("shoppingCart", cart);
