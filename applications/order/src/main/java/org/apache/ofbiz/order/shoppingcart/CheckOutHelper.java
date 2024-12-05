@@ -21,7 +21,6 @@ package org.apache.ofbiz.order.shoppingcart;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.sql.Timestamp;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -30,6 +29,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.ofbiz.base.util.Debug;
 import org.apache.ofbiz.base.util.GeneralException;
 import org.apache.ofbiz.base.util.ObjectType;
@@ -61,6 +62,7 @@ import org.apache.ofbiz.order.order.OrderReadHelper;
 import org.apache.ofbiz.order.shoppingcart.product.ProductPromoWorker;
 import org.apache.ofbiz.order.shoppingcart.shipping.ShippingEvents;
 import org.apache.ofbiz.order.thirdparty.paypal.ExpressCheckoutEvents;
+import org.apache.ofbiz.order.util.S3Uploader;
 import org.apache.ofbiz.party.contact.ContactHelper;
 import org.apache.ofbiz.party.contact.ContactMechWorker;
 import org.apache.ofbiz.product.store.ProductStoreWorker;
@@ -72,8 +74,6 @@ import org.apache.ofbiz.service.ServiceUtil;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import reactor.core.publisher.Mono;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -86,14 +86,17 @@ public class CheckOutHelper {
 
     private static final String MODULE = CheckOutHelper.class.getName();
     private static final String RES_ERROR = "OrderErrorUiLabels";
+    private static final String ORDER_BUCKET = System.getenv("ENVIRONMENT") + "-order-bucket";
 
     private static final int DECIMALS = UtilNumber.getBigDecimalScale("order.decimals");
     private static final RoundingMode ROUNDING = UtilNumber.getRoundingMode("order.rounding");
+    private static final S3Uploader s3Uploader = new S3Uploader(ORDER_BUCKET);
 
     private LocalDispatcher dispatcher = null;
     private Delegator delegator = null;
     private ShoppingCart cart = null;
     private WebClient webClient = null;
+
 
 
     public CheckOutHelper(LocalDispatcher dispatcher, Delegator delegator, ShoppingCart cart) {
@@ -747,7 +750,6 @@ public class CheckOutHelper {
         List<GenericValue> orderItems = UtilGenerics.cast(context.get("orderItems"));
         List<GenericProduct> products = new ArrayList<>();
         int counter = 0;
-        S3Client s3 = S3Client.create();
         for (GenericValue orderItem : orderItems) {
             String productId = orderItem.getString("productId");
             if (productId != null) {
@@ -836,6 +838,14 @@ public class CheckOutHelper {
             }
         }
         // ----------
+
+        try {
+            String orderJson = new ObjectMapper().writeValueAsString(products);
+            s3Uploader.uploadContentsToFile(orderJson, ORDER_BUCKET, orderId);
+        } catch (JsonProcessingException e) {
+            Debug.logError(e, MODULE);
+            return ServiceUtil.returnError(e.getMessage());
+        }
 
         // set the orderId for use by chained events
         Map<String, Object> result = ServiceUtil.returnSuccess();

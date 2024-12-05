@@ -34,4 +34,7 @@ public class AmazonProduct {
 
   @JsonProperty("rating")
   public Double rating;
+
+  @JsonProperty("seller")
+  public SellerProfile seller;
 }
