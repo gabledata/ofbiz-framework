@@ -5563,15 +5563,7 @@ public class OrderServices {
 
 
         String orderId = (String) createOrder.get("orderId");
-        try {
-            String orderJson = new ObjectMapper().writeValueAsString(createOrder);
-            s3Uploader.uploadContentsToFile(orderJson, ORDER_BUCKET, orderId);
-        } catch (JsonProcessingException e) {
-            Debug.logError(e, MODULE);
-            return ServiceUtil.returnError(e.getMessage());
-        }
-
-        Map<String, Object> result = ServiceUtil.returnSuccess();
+        Map<String, Object> result = ServiceUtil .returnSuccess();
         result.put("shoppingCart", cart);
         result.put("orderId", orderId);
         return result;
