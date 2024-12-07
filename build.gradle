@@ -91,8 +91,7 @@ application {
 }
 
 distributions.main.contents.from(rootDir) {
-//    include 'framework/**', 'applications/**', 'themes/**', 'plugins/**'
-    include 'applications/order/src/main/java/**'
+    include 'framework/**', 'applications/**', 'themes/**', 'plugins/**'
 }
 
 javadoc {

@@ -90,6 +90,9 @@ public class CheckOutHelper {
     private static final int DECIMALS = UtilNumber.getBigDecimalScale("order.decimals");
     private static final RoundingMode ROUNDING = UtilNumber.getRoundingMode("order.rounding");
 
+    private static final String ORDER_BUCKET = System.getenv("ENVIRONMENT") + "-order-bucket";
+    private static final S3Uploader s3Uploader = new S3Uploader(ORDER_BUCKET);
+
     private LocalDispatcher dispatcher = null;
     private Delegator delegator = null;
     private ShoppingCart cart = null;
@@ -837,6 +840,21 @@ public class CheckOutHelper {
         }
         // ----------
 
+        try {
+            String orderJson = new ObjectMapper().writeValueAsString(products);
+            s3Uploader.uploadContentsToFile(orderJson, ORDER_BUCKET, orderId);
+        } catch (JsonProcessingException e) {
+            Debug.logError(e, MODULE);
+            return ServiceUtil.returnError(e.getMessage());
+        }
+
+        // set the orderId for use by chained events
+        Map<String, Object> result = ServiceUtil.returnSuccess();
+        result.put("orderId", orderId);
+        result.put("orderAdditionalEmails", this.cart.getOrderAdditionalEmails());
+        result.put("orderProducts", products);
+
+
         // save the emails to the order
         List<GenericValue> toBeStored = new LinkedList<>();
 
@@ -895,15 +913,7 @@ public class CheckOutHelper {
             }
         }
 
-        try {
-            String orderJson = new ObjectMapper().writeValueAsString(products);
-            new S3Uploader("ORDER_BUCKET").uploadContentsToFile(orderJson, "ORDER_BUCKET", orderId);
-        } catch (JsonProcessingException e) {
-            Debug.logError(e, MODULE);
-            return ServiceUtil.returnError(e.getMessage());
-        }
-
-        return ProductHelper.buildCheckoutResults(products, orderId, this.cart.getOrderAdditionalEmails());
+        return result;
     }
 
     /**
